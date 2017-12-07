@@ -86,7 +86,10 @@ class AccountForm(Form):
     phone_number = StringField('Phone', [validators.Length(max=50)])
 
     # Chef options
-    chefspec = SelectField('Chef Speciality Cuisine', coerce = int)
+    chefspec = SelectField('Chef Speciality Cuisine',
+                           [validators.NumberRange(min=0)],
+                           coerce = int)
+    reachouts = TextAreaField('Reachout Areas', [validators.Length(max = 500)])
 
     # Customer options
     custpref = StringField('Customer Preference Notes', [validators.Length(max=500)])
@@ -98,14 +101,19 @@ class OrderPageForm(Form):
 
 
     orderDate = StringField('datepicker')
-    comments = StringField('comments', [validators.Length(min=1, max=50)])
+    comments = StringField('comments', [validators.Length(min=1, max=1000)])
 # END OrderPageForm
 
 
 class ConfirmOrderForm(Form):
     requested_date = DateField('Requested Date', format = '%Y-%m-%d',
                                validators=[DateRange(min = datetime.date.today())])
-    comment = TextAreaField('Comments', [validators.Length(min = 0)])
+    comment = TextAreaField('Comments', [validators.Length(min = 0, max=1000)])
+# END ConfirmOrderForm
+
+
+class UpdateOrderForm(Form):
+    comment = TextAreaField('Comments', [validators.Length(min = 0, max=1000)])
 # END ConfirmOrderForm
 
 

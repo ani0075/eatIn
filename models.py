@@ -50,7 +50,7 @@ class Chef(db.Model):
         return '<ChefID %r>' % self.chefid
 
     def update(self, _aptno, _street, _city, _state, _zipcode,
-               _countryid, _phoneno, _cspec):
+               _countryid, _phoneno, _cspec, _reachouts_str):
         if (_aptno and _aptno != self.address):
             self.address = _aptno
 
@@ -82,6 +82,13 @@ class Chef(db.Model):
                 cspecm = ChefSpecial(self.chefid, _cspec)
                 db.session.add(cspecm)
 
+        if (_reachouts_str):
+            print "in reachouts"
+            reachouts_str = self.get_reachouts_str()
+
+            if (reachouts_str != _reachouts_str):
+                add_reachouts_by_str(self.chefid, _reachouts_str)
+
         return 0
 
     def get_user(self):
@@ -95,6 +102,14 @@ class Chef(db.Model):
         else:
             return None
 
+    def get_specialty_id(self):
+        chefspec = self.get_specialty()
+        if (chefspec != None):
+            cuisine = Cuisine.query.filter_by(cuisineid = chefspec.cuisineid).first()
+            return cuisine.cuisineid
+        else:
+            return -1
+
     def get_specialty_mapping(self):
         return ChefSpecial.query.filter_by(chefid = self.chefid).first()
 
@@ -106,6 +121,25 @@ class Chef(db.Model):
 
     def get_full_name(self):
         return get_user_by_id(self.userid).fname + " " + get_user_by_id(self.userid).lname
+
+    def get_reachouts_str(self, single_line = False):
+        reachouts = get_reachouts_list_by_chefid(self.chefid)
+
+        # set delimiter
+        DELIM = ", " if single_line else "\n"
+
+        reachouts_str = ""
+
+        if (reachouts == None or len(reachouts) == 0):
+            return reachouts_str
+
+        for r in reachouts:
+            reachouts_str = reachouts_str + r.city + DELIM
+
+        return reachouts_str.strip()
+
+    def get_reachouts_list(self):
+        return get_reachouts_list_by_chefid(self.chefid)
 # END Chef
 
 def get_chef_by_user(_user):
@@ -130,18 +164,37 @@ def get_chefs_by_countryid(_countryid):
 class ChefReachout(db.Model):
     __tablename__ = 'chefreachout'
 
+    reachoutid = db.Column(db.Integer, primary_key=True)
     chefid = db.Column(db.Integer, db.ForeignKey('chef.chefid'), primary_key=True)
     city = db.Column(db.String(50))
     miles = db.Column(db.Integer)
 
-    def __init__(self, chefid, city):
+    def __init__(self, chefid, city, miles):
         self.chefid = chefid
         self.city = city
         self.miles
 
     def __repr__(self):
-        return '<ChefID %r City %s Miles %r>' % (self.chefid, self.city, self.miles)
+        return '<RO %r>' % (self.reachoutid)
 # END ChefReachout
+
+def get_reachouts_list_by_chefid(_chefid):
+    return ChefReachout.query.filter_by(chefid = _chefid).distinct().all()
+# END get_reachouts_list_by_chefid
+
+def add_reachouts_by_str(_chefid, _str):
+    # delete existing reachout data
+    db.engine.execute(text("CALL delete_chef_reachouts(%s)" % (_chefid)))
+
+    # add new ones
+    reachouts = _str.split("\n")
+    for r in reachouts:
+        ro = ChefReachout(_chefid, r.strip(), 0)
+        db.session.add(ro)
+    db.session.commit()
+
+    return 0
+# END add_reachouts_by_str
 
 
 class ChefSpecial(db.Model):
@@ -417,7 +470,8 @@ class User(db.Model):
         return '<UserID %r>' % self.userid
 
     def update(self, _fname, _lname, _email, _passwd, _utype, _aptno, _street,
-               _city, _state, _zipcode, _countryid, _phoneno, _chefspecid, _custpref):
+               _city, _state, _zipcode, _countryid, _phoneno, _chefspecid, 
+               _reachouts, _custpref):
 
         if (_email and _email != self.email and len(_email) > 6):
              if (get_user_by_email(_email) == None):
@@ -445,7 +499,7 @@ class User(db.Model):
             # a new one
             if (chef):
                 chef.update(_aptno, _street, _city, _state, _zipcode,
-                            _countryid, _phoneno, _chefspecid)
+                            _countryid, _phoneno, _chefspecid, _reachouts)
                 print "updated old chef", chef.chefid
             else:
                 chef = Chef(_aptno, _street, _city, _state, _zipcode,
@@ -470,6 +524,10 @@ class User(db.Model):
             cust = get_customer_by_user(self)
 
             if (chef):
+                orders = get_orders_by_chef_id(chef.chefid)
+                for o in orders:
+                    cancel_order(o, "system")
+
                 db.engine.execute(text("CALL delete_chef(%s)" % (chef.chefid)))
 
             # now update old/make new customer
@@ -485,12 +543,16 @@ class User(db.Model):
             cust = get_customer_by_user(self)
 
             if (cust):
+                orders = get_orders_by_customer_id(cust.customerid)
+                for o in orders:
+                    cancel_order(o, "system")
+
                 db.engine.execute(text("CALL delete_customer(%s)" % (cust.customerid)))
 
             # now update/create chef
             if (chef):
                 chef.update(_aptno, _street, _city, _state, _zipcode,
-                            _countryid, _phoneno, _chefspecid)
+                            _countryid, _phoneno, _chefspecid, _reachouts)
             else:
                 chef = Chef(_aptno, _street, _city, _state, _zipcode,
                             _countryid, _phoneno, None, self.userid, None)
@@ -560,7 +622,7 @@ class OrderFood(db.Model):
     foodid = db.Column(db.Integer, db.ForeignKey('fooditem.foodid'))
     order_date = db.Column(db.DateTime)
     req_date = db.Column(db.DateTime)
-    comment = db.Column(db.String(300))
+    comment = db.Column(db.String(1000))
 
     def __init__(self, customerid, chefid, foodid, order_date, req_date, comment):
         self.customerid = customerid
@@ -572,6 +634,12 @@ class OrderFood(db.Model):
 
     def __repr__(self):
         return '<OrderID %r>' % self.orderid
+
+    def update_comment(self, _comment):
+        print _comment
+        self.comment = _comment
+        db.session.commit()
+        return 0
 
     def get_food(self):
         return get_fooditem_by_id(self.foodid)
@@ -604,6 +672,103 @@ def create_order(_custid, _chefid, _foodid, _req_date, _comment):
     return 0
 # END create_order
 
+# if lock == true, locks the row in update mode until the next call to db.session.commit()
+def get_order_by_id(_orderid, lock = False):
+    if (not lock):
+        return OrderFood.query.filter_by(orderid = _orderid).first()
+    else:
+        return OrderFood.query.with_lockmode("update").filter_by(orderid = _orderid).first()
+# END get_order_by_id
+
+
+class ArchivedOrder(db.Model):
+    __tablename__ = 'archivedorder'
+
+    orderid = db.Column(db.Integer, primary_key=True)
+    customerid = db.Column(db.Integer)
+    chefid = db.Column(db.Integer)
+    foodid = db.Column(db.Integer)
+    order_date = db.Column(db.DateTime)
+    req_date = db.Column(db.DateTime)
+    comment = db.Column(db.String(1000))
+    status = db.Column(db.String(40))
+    end_date = db.Column(db.DateTime)
+
+    def __init__(self, old_order, status, end_date):
+        self.orderid = old_order.orderid
+        self.customerid = old_order.customerid
+        self.chefid = old_order.chefid
+        self.foodid = old_order.foodid
+        self.order_date = old_order.order_date
+        self.req_date = old_order.req_date
+        self.comment = old_order.comment
+
+        self.status = status
+        self.end_date = end_date
+
+    def __repr__(self):
+        return '<ArchivedID %r>' % self.orderid
+
+    def get_food(self):
+        return get_fooditem_by_id(self.foodid)
+
+    def get_chef(self):
+        return get_chef_by_id(self.chefid)
+
+    def get_customer(self):
+        return get_customer_by_id(self.customerid)
+# END ArchivedOrder
+
+def get_archived_order_by_id(_orderid):
+    return ArchivedOrder.query.filter_by(orderid = _orderid).first()
+# END get_archived_order_by_id
+
+def get_archived_orders_by_customer_id(_custid):
+    orders = ArchivedOrder.query.filter_by(customerid = _custid).all()
+    return orders
+# END get_archived_orders_by_customer_id
+
+def get_archived_orders_by_chef_id(_chefid):
+    orders = ArchivedOrder.query.filter_by(chefid = _chefid).all()
+    return orders
+# END get_archived_orders_by_chef_id
+
+def cancel_order(_order, _who):
+    _order = OrderFood.query.with_lockmode("update").filter_by(orderid = _order.orderid).first()
+
+    status = "cancelled by %s" % _who
+
+    end_date = datetime.datetime.now()
+
+    # TRANSACTION START
+    ao = ArchivedOrder(_order, status, end_date)
+    db.session.add(ao)
+
+    db.session.delete(_order)
+    db.session.commit()
+    # TRANSACTION END
+
+    return 0
+# END cancel_order
+
+def complete_order(_order):
+    _order = OrderFood.query.with_lockmode("update").filter_by(orderid = _order.orderid).first()
+
+    status = "completed by chef"
+
+    end_date = datetime.datetime.now()
+
+    # TRANSACTION START
+    ao = ArchivedOrder(_order, status, end_date)
+    db.session.add(ao)
+
+    db.session.delete(_order)
+    db.session.commit()
+    # TRANSACTION END
+
+    return 0
+# END cancel_order
+
 
 # Counter tables (read only)
 class FoodItemCnt(db.Model):
@@ -618,7 +783,7 @@ class FoodItemCnt(db.Model):
 
 # return format is: [foodid, name, cook time, rating, price, counter]
 def get_most_popular_foods():
-    LIM = 100
+    LIM = 50
     stmt = "CALL get_most_popular_foods(%d)" % (LIM)
 
     #stmt = "SELECT fooditem.foodid, fooditem.foodname, fooditem.cook_time, " \
@@ -633,7 +798,7 @@ def get_most_popular_foods():
         foods.append(r)
 
     return foods
-# END get_most_popular_chefs
+# END get_most_popular_foods
 
 
 class ChefCnt(db.Model):
@@ -649,7 +814,7 @@ class ChefCnt(db.Model):
 # return format is: [userid, chefid, fname, lname, countryid, countryname, cuisineid,
 #                    cuisine_name, counter]
 def get_most_popular_chefs():
-    LIM = 100
+    LIM = 50
     stmt = "CALL get_most_popular_chefs(%d)" % (LIM)
 
     #stmt = "SELECT chef.userid, chef.chefid, user.fname, user.lname," \
@@ -689,7 +854,7 @@ class CuisineCnt(db.Model):
 
 # return format is: [cuisineid, cuisine_name, counter]
 def get_most_popular_cuisines():
-    LIM = 100
+    LIM = 50
     stmt = "CALL get_most_popular_cuisines(%d)" % (LIM)
 
     res = db.engine.execute(text(stmt))

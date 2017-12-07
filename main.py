@@ -35,9 +35,11 @@ from models import db
 
 @app.route('/')
 def index():
-    if 'username' in session:
-        username_session = escape(session['username']).capitalize()
-        return render_template('index.html', session_user_name = username_session)
+    if ('username' in session):
+        return render_template('index.html',
+                               session_user_name = session['username'])
+
+    # redirct to login page if not logged in
     return redirect(url_for('login'))
 # END index
 
@@ -56,7 +58,8 @@ def login():
                 update_session(user)
 
                 flash('You are now logged in', 'success')
-                return redirect(url_for('dashboard'))
+                return render_template('index.html',
+                                       session_user_name = session['username'])
             else:
                 error = 'Invalid credentials'
                 return render_template('login.html', error = error)
@@ -88,6 +91,19 @@ def is_logged_in(f):
             return redirect(url_for('login'))
     return wrap
 # END is_logged_in
+
+
+# Check if user is a customer
+def is_cust(f):
+    @wraps(f)
+    def wrap(*args, **kwargs):
+        if session['custid']:
+            return f(*args, **kwargs)
+        else:
+            flash('Order page only available for customers.', 'danger')
+            return redirect(url_for('dashboard'))
+    return wrap
+# END is_chef_only
 
 
 @app.route('/dashboard')
@@ -200,10 +216,120 @@ def confirmorder(foodid, chefid):
 # END confirmorder
 
 
-@app.route('/orderhistory')
-@app.route('/orderhistory/')
+@app.route('/cancelorder/<orderid>', methods=['GET'])
+@app.route('/cancelorder/<orderid>/', methods=['GET'])
+@is_logged_in
+def cancelorder(orderid):
+    order = models.get_order_by_id(int(orderid))
+    print order
+
+    if (session['chefid'] == order.chefid):
+        models.cancel_order(order, "chef")
+        flash('Order cancelled.', 'success')
+
+    elif (session['custid'] == order.customerid):
+        models.cancel_order(order, "customer")
+        flash('Order cancelled.', 'success')
+
+    else:
+        flash('Order not changed', 'danger')
+
+    return redirect(url_for('dashboard'))
+# END cancelorder
+
+
+@app.route('/completeorder/<orderid>', methods=['GET'])
+@app.route('/completeorder/<orderid>/', methods=['GET'])
+@is_logged_in
+def completeorder(orderid):
+    order = models.get_order_by_id(int(orderid))
+    print order
+
+    if (session['chefid'] == order.chefid):
+        models.complete_order(order)
+        flash('Order completed.', 'success')
+
+    else:
+        flash('Order not changed', 'danger')
+
+    return redirect(url_for('dashboard'))
+# END completeorder
+
+
+@app.route('/orderinfo/<orderid>', methods=['GET', 'POST'])
+@app.route('/orderinfo/<orderid>/', methods=['GET', 'POST'])
+@is_logged_in
+def orderinfo(orderid):
+    form = forms.UpdateOrderForm(request.form)
+
+    # try to get order from active orders list
+    order = models.get_order_by_id(int(orderid))
+    is_hist = False
+
+    # if not found, use archived order
+    if (order == None):
+        order = models.get_archived_order_by_id(int(orderid))
+        is_hist = True
+
+    food = models.get_fooditem_by_id(order.foodid)
+    chef = models.get_chef_by_id(order.chefid)
+    cust = models.get_customer_by_id(order.customerid)
+
+    print order, food, chef, cust
+
+    if (request.method == 'POST' and form.validate()):
+        comment = form.comment.data
+
+        order = models.get_order_by_id(int(orderid), True)
+        order.update_comment(comment)
+
+        if (session['chefid'] == chef.chefid):
+            flash('You are the CHEF of this order!', 'success')
+        elif (session['custid'] == cust.customerid):
+            flash('You are the CUSTOMER of this order!', 'success')
+
+        flash('Order comment updated', 'success')
+
+        return render_template('orderinfo.html', form = form,
+                                                 order = order,
+                                                 food = food,
+                                                 chef = chef,
+                                                 cust = cust,
+                                                 is_hist = is_hist)
+
+    form.comment.data = order.comment
+
+    if (session['chefid'] == chef.chefid):
+        flash('You are the CHEF of this order!', 'success')
+    elif (session['custid'] == cust.customerid):
+        flash('You are the CUSTOMER of this order!', 'success')
+
+    return render_template('orderinfo.html', form = form,
+                                             order = order,
+                                             food = food,
+                                             chef = chef,
+                                             cust = cust,
+                                             is_hist = is_hist)
+# END orderinfo
+
+
+@app.route('/orderhistory', methods=['GET'])
+@app.route('/orderhistory/', methods=['GET'])
+@is_logged_in
 def orderhistory():
-    return render_template('orderhistory.html')
+    _orders_as_cust = []
+    _orders_as_chef = []
+
+    if (session['custid']):
+        _orders_as_cust = models.get_archived_orders_by_customer_id(session['custid'])
+
+    if (session['chefid']):
+        _orders_as_chef = models.get_archived_orders_by_chef_id(session['chefid'])
+
+    return render_template('orderhistory.html',
+                           orders_as_cust = _orders_as_cust,
+                           orders_as_chef = _orders_as_chef)
+# END orderhistory
 
 
 @app.route('/about')
@@ -226,6 +352,7 @@ def account():
     form = forms.AccountForm(request.form)
     form.country.choices = [(c.countryid, c.countryname) for c in models.get_all_countries()]
     form.chefspec.choices = [(c.cuisineid, c.cuisine_name) for c in models.get_all_cuisines()]
+    form.chefspec.choices.append((-1, "Pick a Specialty..."))
     #form.custpref.choices = [(c.cuisineid, c.cuisine_name) for c in models.get_all_cuisines()]
 
     # populate form with existing info
@@ -261,30 +388,32 @@ def account():
             country   = int(form.country.data) if form.country.data else None
             phoneno   = int(form.phone_number.data) if form.phone_number.data else None
             chefspec  = None
+            reachouts = None
             custpref  = None
 
             if (chef):
                 chefspec  = int(form.chefspec.data)
+                reachouts = form.reachouts.data
             if (cust):
                 custpref  = form.custpref.data
 
             # update with new info if necessary
             r = user.update(fname, lname, email, passwd, user_type, aptno, street,
                             city, state, zipcode, country, phoneno, chefspec,
-                            custpref)
+                            reachouts, custpref)
 
             update_session(user)
 
             if (r == 0):
-                flash('User details updated', 'success')
+                flash('User details updated. Visit account page again to see new fields', 'success')
             else:
-                flash('Update failed', 'danger')
+                flash('Update failed, check the submitted data for errors', 'danger')
 
             return render_template('account.html', form = form,
                                                    chef = chef,
                                                    cust = cust)
         else:
-            flash('Update failed', 'danger')
+            flash('Update failed, check the submitted data for errors', 'danger')
             return render_template('account.html', form = form,
                                                    chef = chef,
                                                    cust = cust)
@@ -294,6 +423,7 @@ def account():
         aptno, street, city, state, zipcode, countryid, phoneno = (None,)*7
         chefspec = None
         custpref = None
+        reachouts = None
         if (chef and cust):
             usertype  = "both"
             aptno     = chef.address
@@ -304,6 +434,7 @@ def account():
             countryid = chef.countryid
             phoneno   = chef.phone_number
             chefspec  = chef.get_specialty()
+            reachouts = chef.get_reachouts_str()
             custpref  = cust.preference
         elif (chef):
             usertype  = "chef"
@@ -315,6 +446,7 @@ def account():
             countryid = chef.countryid
             phoneno   = chef.phone_number
             chefspec  = chef.get_specialty()
+            reachouts = chef.get_reachouts_str()
         elif (cust):
             usertype  = "customer"
             aptno     = cust.address
@@ -340,11 +472,13 @@ def account():
         form.country.data      = countryid
         form.phone_number.data = str(phoneno)
 
-        form.chefspec.data     = chefspec
+        form.chefspec.data     = chefspec.cuisineid if chefspec else -1
+        form.reachouts.data    = reachouts
         form.custpref.data     = custpref
 
         if (not chef):
             del form.chefspec
+            del form.reachouts
         if (not cust):
             del form.custpref
 
@@ -377,6 +511,7 @@ def orderpage():
 @app.route('/dashboard_order', methods=['GET', 'POST'])
 @app.route('/dashboard_order/', methods=['GET', 'POST'])
 @is_logged_in
+@is_cust
 def dashboard_order():
     return render_template('dashboard_order.html')
 # END dashboard_order
@@ -465,4 +600,5 @@ def update_session(user):
 
 
 if __name__ == '__main__':
-    app.run(host = "127.0.0.1", port = 5050, debug = True)
+    app.run(host = "0.0.0.0", port = 5050, debug = True)
+    #app.run(host = "127.0.0.1", port = 5050, debug = True)
