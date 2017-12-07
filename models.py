@@ -238,7 +238,7 @@ class Country(db.Model):
 # END Country
 
 def get_country_id_by_name(_countryname):
-    country = Country.query.filter_by(countryname = _countryname).first()  
+    country = Country.query.filter_by(countryname = _countryname).first()
     return country
 # END get_country_id_by_name
 
@@ -616,7 +616,7 @@ class FoodItemCnt(db.Model):
         return '<FoodID %r>' % self.foodid
 # END FoodItemCnt
 
-# return format is: [foodid, name, cook time, rating, price, counter] 
+# return format is: [foodid, name, cook time, rating, price, counter]
 def get_most_popular_foods():
     LIM = 100
     stmt = "CALL get_most_popular_foods(%d)" % (LIM)
@@ -626,7 +626,7 @@ def get_most_popular_foods():
     #       "FROM fooditem_cnt JOIN fooditem ON fooditem.foodid = fooditem_cnt.foodid " \
     #       "ORDER BY counter " \
     #       "LIMIT 100"
-    
+
     res = db.engine.execute(text(stmt))
     foods = []
     for r in res:

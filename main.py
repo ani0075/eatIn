@@ -9,12 +9,12 @@ from passlib.hash import sha256_crypt
 
 from config import *
 
-# app/db config stuff
-#app = Flask(__name__)
-#app.config["APPLICATION_ROOT"] = APP_ROOT
-#app.config['SQLALCHEMY_DATABASE_URI'] = SQL_URI
-#app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = True
-#app.secret_key = SEC_KEY
+# #app/db config stuff
+# app = Flask(__name__)
+# app.config["APPLICATION_ROOT"] = APP_ROOT
+# app.config['SQLALCHEMY_DATABASE_URI'] = SQL_URI
+# app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = True
+# app.secret_key = SEC_KEY
 
 if sys.version_info.major < 3:
     reload(sys)
