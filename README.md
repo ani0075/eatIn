@@ -25,4 +25,6 @@ python 2.7
 flask  
 flask-sqlalchemy  
 wtforms  
-passlib  
+passlib
+
+checking git connectivity  
